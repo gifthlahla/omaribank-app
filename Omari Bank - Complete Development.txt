@@ -1,0 +1,898 @@
+# Omari Bank - Complete Development Documentation for Antigravity AI
+
+## Project Overview
+
+**Omari Bank** is a mobile banking/digital wallet app built with Flutter and Supabase. The app enables users to create accounts, manage their digital wallet, send and receive money, and track transactions in real-time.
+
+### MVP Features
+- User registration and secure login (email/password)
+- View wallet balance in real-time
+- Peer-to-peer money transfers
+- View transaction history
+- Simulated deposits and withdrawals
+
+---
+
+## 1. Backend Configuration (Supabase)
+
+### Connection Credentials
+
+```
+Supabase URL: https://illrfnelbgikxgsooaej.supabase.co
+Publishable Key: sb_publishable_-3NhKiyRw_QGyV4SW16pfw_4gyMz1sj
+```
+
+### Database Schema
+
+The backend is fully deployed with the following tables:
+
+#### Profiles Table
+```sql
+CREATE TABLE public.profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL,
+  phone_number TEXT UNIQUE,
+  avatar_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+#### Wallets Table
+```sql
+CREATE TABLE public.wallets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE UNIQUE NOT NULL,
+  balance DECIMAL(12,2) DEFAULT 0.00 CHECK (balance >= 0),
+  currency TEXT DEFAULT 'USD',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+#### Transactions Table
+```sql
+CREATE TABLE public.transactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sender_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  recipient_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
+  transaction_type TEXT CHECK (transaction_type IN ('deposit', 'withdrawal', 'transfer')),
+  status TEXT DEFAULT 'completed' CHECK (status IN ('pending', 'completed', 'failed', 'reversed')),
+  description TEXT,
+  reference TEXT UNIQUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+#### Funding Requests Table
+```sql
+CREATE TABLE public.funding_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
+  request_type TEXT CHECK (request_type IN ('deposit', 'withdrawal')),
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
+  payment_method TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  processed_at TIMESTAMPTZ
+);
+```
+
+### Row Level Security (RLS) Policies
+
+All tables have RLS enabled. Users can only access their own data.
+
+### Secure Database Functions (RPC)
+
+**CRITICAL: All money movement MUST use these RPC functions. Never update wallet balances directly from the client.**
+
+#### Transfer Money (P2P)
+```sql
+public.transfer_money(
+  p_recipient_id UUID,
+  p_amount DECIMAL,
+  p_description TEXT DEFAULT NULL
+) RETURNS UUID
+```
+
+#### Process Deposit
+```sql
+public.process_deposit(
+  p_amount DECIMAL,
+  p_payment_method TEXT DEFAULT 'simulated'
+) RETURNS UUID
+```
+
+#### Process Withdrawal
+```sql
+public.process_withdrawal(
+  p_amount DECIMAL,
+  p_payment_method TEXT DEFAULT 'simulated'
+) RETURNS UUID
+```
+
+### Auto-Provisioning
+
+When a user signs up, a trigger automatically creates:
+- A profile record
+- A wallet with $100.00 starting balance
+
+### Real-Time Subscriptions
+
+The following tables are enabled for real-time subscriptions:
+- `wallets` (via `supabase_realtime` publication)
+- `transactions` (via `supabase_realtime` publication)
+
+---
+
+## 2. Flutter Project Setup
+
+### Dependencies (`pubspec.yaml`)
+
+```yaml
+dependencies:
+  flutter:
+    sdk: flutter
+  supabase_flutter: ^2.8.4
+  go_router: ^14.8.1
+  flutter_riverpod: ^2.6.1
+  intl: ^0.20.2
+  shimmer: ^3.0.0
+  uuid: ^4.5.1
+  cached_network_image: ^3.4.1
+```
+
+### Supabase Initialization (`lib/main.dart`)
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:omari_bank/app/app.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  await Supabase.initialize(
+    url: 'https://illrfnelbgikxgsooaej.supabase.co',
+    anonKey: 'sb_publishable_-3NhKiyRw_QGyV4SW16pfw_4gyMz1sj',
+  );
+  
+  runApp(const ProviderScope(child: OmariBankApp()));
+}
+
+class OmariBankApp extends ConsumerWidget {
+  const OmariBankApp({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return MaterialApp.router(
+      title: 'Omari Bank',
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
+      routerConfig: ref.watch(appRouterProvider),
+      debugShowCheckedModeBanner: false,
+    );
+  }
+}
+```
+
+---
+
+## 3. Folder Structure (Clean Architecture)
+
+```
+lib/
+├── main.dart
+├── app/
+│   ├── app.dart
+│   └── app_router.dart
+│
+├── core/
+│   ├── constants/
+│   │   ├── app_colors.dart
+│   │   ├── app_strings.dart
+│   │   └── app_constants.dart
+│   │
+│   ├── theme/
+│   │   ├── app_theme.dart
+│   │   └── text_styles.dart
+│   │
+│   ├── utils/
+│   │   ├── formatters.dart
+│   │   ├── validators.dart
+│   │   └── extensions.dart
+│   │
+│   └── widgets/
+│       ├── loading_shimmer.dart
+│       ├── empty_state.dart
+│       ├── error_widget.dart
+│       └── confirmation_dialog.dart
+│
+├── features/
+│   ├── auth/
+│   │   ├── data/
+│   │   │   ├── auth_repository.dart
+│   │   │   └── auth_repository_impl.dart
+│   │   ├── domain/
+│   │   │   └── user_model.dart
+│   │   └── presentation/
+│   │       ├── providers/
+│   │       │   └── auth_provider.dart
+│   │       ├── screens/
+│   │       │   ├── login_screen.dart
+│   │       │   └── register_screen.dart
+│   │       └── widgets/
+│   │           └── auth_text_field.dart
+│   │
+│   ├── wallet/
+│   │   ├── data/
+│   │   │   ├── wallet_repository.dart
+│   │   │   └── wallet_repository_impl.dart
+│   │   ├── domain/
+│   │   │   └── wallet_model.dart
+│   │   └── presentation/
+│   │       ├── providers/
+│   │       │   └── wallet_provider.dart
+│   │       ├── screens/
+│   │       │   └── home_screen.dart
+│   │       └── widgets/
+│   │           ├── balance_card.dart
+│   │           ├── quick_actions_grid.dart
+│   │           └── skeleton_balance_card.dart
+│   │
+│   ├── transactions/
+│   │   ├── data/
+│   │   │   ├── transaction_repository.dart
+│   │   │   └── transaction_repository_impl.dart
+│   │   ├── domain/
+│   │   │   ├── transaction_model.dart
+│   │   │   └── transaction_type_enum.dart
+│   │   └── presentation/
+│   │       ├── providers/
+│   │       │   └── transaction_provider.dart
+│   │       ├── screens/
+│   │       │   ├── transaction_history_screen.dart
+│   │       │   ├── transaction_detail_screen.dart
+│   │       │   ├── send_money_screen.dart
+│   │       │   ├── deposit_screen.dart
+│   │       │   └── withdraw_screen.dart
+│   │       └── widgets/
+│   │           ├── transaction_tile.dart
+│   │           ├── amount_input_field.dart
+│   │           ├── recipient_search_field.dart
+│   │           └── skeleton_transaction_tile.dart
+│   │
+│   └── profile/
+│       └── presentation/
+│           ├── screens/
+│           │   └── profile_screen.dart
+│           └── widgets/
+│               ├── profile_header.dart
+│               └── settings_tile.dart
+│
+└── shared/
+    └── services/
+        └── supabase_service.dart
+```
+
+---
+
+## 4. Data Models (Dart)
+
+### User Model (`lib/features/auth/domain/user_model.dart`)
+
+```dart
+class UserModel {
+  final String id;
+  final String email;
+  final String fullName;
+  final String? phoneNumber;
+  final String? avatarUrl;
+  final DateTime createdAt;
+
+  UserModel({
+    required this.id,
+    required this.email,
+    required this.fullName,
+    this.phoneNumber,
+    this.avatarUrl,
+    required this.createdAt,
+  });
+
+  factory UserModel.fromJson(Map<String, dynamic> json) {
+    return UserModel(
+      id: json['id'],
+      email: json['email'] ?? '',
+      fullName: json['full_name'] ?? '',
+      phoneNumber: json['phone_number'],
+      avatarUrl: json['avatar_url'],
+      createdAt: DateTime.parse(json['created_at'] ?? DateTime.now().toIso8601String()),
+    );
+  }
+}
+```
+
+### Wallet Model (`lib/features/wallet/domain/wallet_model.dart`)
+
+```dart
+class WalletModel {
+  final String id;
+  final String userId;
+  final double balance;
+  final String currency;
+  final DateTime updatedAt;
+
+  WalletModel({
+    required this.id,
+    required this.userId,
+    required this.balance,
+    required this.currency,
+    required this.updatedAt,
+  });
+
+  factory WalletModel.fromJson(Map<String, dynamic> json) {
+    return WalletModel(
+      id: json['id'],
+      userId: json['user_id'],
+      balance: (json['balance'] as num).toDouble(),
+      currency: json['currency'] ?? 'USD',
+      updatedAt: DateTime.parse(json['updated_at']),
+    );
+  }
+}
+```
+
+### Transaction Model (`lib/features/transactions/domain/transaction_model.dart`)
+
+```dart
+enum TransactionType { deposit, withdrawal, transfer }
+
+class TransactionModel {
+  final String id;
+  final String? senderId;
+  final String? recipientId;
+  final double amount;
+  final TransactionType type;
+  final String status;
+  final String? description;
+  final String reference;
+  final DateTime createdAt;
+
+  TransactionModel({
+    required this.id,
+    this.senderId,
+    this.recipientId,
+    required this.amount,
+    required this.type,
+    required this.status,
+    this.description,
+    required this.reference,
+    required this.createdAt,
+  });
+
+  factory TransactionModel.fromJson(Map<String, dynamic> json) {
+    return TransactionModel(
+      id: json['id'],
+      senderId: json['sender_id'],
+      recipientId: json['recipient_id'],
+      amount: (json['amount'] as num).toDouble(),
+      type: _parseType(json['transaction_type']),
+      status: json['status'] ?? 'completed',
+      description: json['description'],
+      reference: json['reference'],
+      createdAt: DateTime.parse(json['created_at']),
+    );
+  }
+
+  static TransactionType _parseType(String? type) {
+    switch (type) {
+      case 'deposit':
+        return TransactionType.deposit;
+      case 'withdrawal':
+        return TransactionType.withdrawal;
+      case 'transfer':
+        return TransactionType.transfer;
+      default:
+        return TransactionType.transfer;
+    }
+  }
+
+  bool get isIncoming => type == TransactionType.deposit;
+  bool get isOutgoing => type == TransactionType.withdrawal || type == TransactionType.transfer;
+  
+  String get displayTitle {
+    switch (type) {
+      case TransactionType.deposit:
+        return 'Deposit';
+      case TransactionType.withdrawal:
+        return 'Withdrawal';
+      case TransactionType.transfer:
+        return senderId != null ? 'Sent Money' : 'Received Money';
+    }
+  }
+}
+```
+
+---
+
+## 5. Repositories (Riverpod Providers)
+
+### Auth Repository (`lib/features/auth/data/auth_repository_impl.dart`)
+
+```dart
+class AuthRepositoryImpl implements AuthRepository {
+  final SupabaseClient _supabase;
+  
+  AuthRepositoryImpl({required SupabaseClient supabase}) : _supabase = supabase;
+
+  @override
+  Future<UserModel?> signIn(String email, String password) async {
+    final response = await _supabase.auth.signInWithPassword(
+      email: email,
+      password: password,
+    );
+    if (response.user != null) {
+      return await getCurrentUser(response.user!.id);
+    }
+    return null;
+  }
+
+  @override
+  Future<UserModel?> signUp({
+    required String email,
+    required String password,
+    required String fullName,
+    String? phoneNumber,
+  }) async {
+    final response = await _supabase.auth.signUp(
+      email: email,
+      password: password,
+      data: {'full_name': fullName},
+    );
+    if (response.user != null) {
+      await _supabase.from('profiles').update({
+        'phone_number': phoneNumber,
+      }).eq('id', response.user!.id);
+      return await getCurrentUser(response.user!.id);
+    }
+    return null;
+  }
+
+  @override
+  Future<void> signOut() async => await _supabase.auth.signOut();
+
+  @override
+  Future<UserModel?> getCurrentUser(String userId) async {
+    final response = await _supabase
+        .from('profiles')
+        .select()
+        .eq('id', userId)
+        .single();
+    final user = _supabase.auth.currentUser;
+    return UserModel(
+      id: response['id'],
+      email: user?.email ?? '',
+      fullName: response['full_name'] ?? '',
+      phoneNumber: response['phone_number'],
+      avatarUrl: response['avatar_url'],
+      createdAt: DateTime.parse(response['created_at']),
+    );
+  }
+
+  @override
+  Stream<UserModel?> get authStateChanges {
+    return _supabase.auth.onAuthStateChange.map((event) async {
+      final user = event.session?.user;
+      if (user != null) return await getCurrentUser(user.id);
+      return null;
+    }).asyncMap((user) => user);
+  }
+}
+```
+
+### Wallet Repository (`lib/features/wallet/data/wallet_repository_impl.dart`)
+
+```dart
+class WalletRepositoryImpl implements WalletRepository {
+  final SupabaseClient _supabase;
+  
+  WalletRepositoryImpl({required SupabaseClient supabase}) : _supabase = supabase;
+
+  @override
+  Stream<WalletModel?> watchUserWallet(String userId) {
+    return _supabase
+        .from('wallets')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', userId)
+        .map((data) => data.isNotEmpty ? WalletModel.fromJson(data.first) : null);
+  }
+
+  @override
+  Future<double> getBalance(String userId) async {
+    final response = await _supabase
+        .from('wallets')
+        .select('balance')
+        .eq('user_id', userId)
+        .single();
+    return (response['balance'] as num).toDouble();
+  }
+
+  @override
+  Future<void> deposit(double amount) async {
+    await _supabase.rpc('process_deposit', params: {
+      'p_amount': amount,
+      'p_payment_method': 'mobile_app',
+    });
+  }
+
+  @override
+  Future<void> withdraw(double amount) async {
+    await _supabase.rpc('process_withdrawal', params: {
+      'p_amount': amount,
+      'p_payment_method': 'mobile_app',
+    });
+  }
+
+  @override
+  Future<String> transfer({
+    required String recipientId,
+    required double amount,
+    String? description,
+  }) async {
+    final result = await _supabase.rpc('transfer_money', params: {
+      'p_recipient_id': recipientId,
+      'p_amount': amount,
+      'p_description': description,
+    });
+    return result as String;
+  }
+}
+```
+
+### Transaction Repository (`lib/features/transactions/data/transaction_repository_impl.dart`)
+
+```dart
+class TransactionRepositoryImpl implements TransactionRepository {
+  final SupabaseClient _supabase;
+  
+  TransactionRepositoryImpl({required SupabaseClient supabase}) : _supabase = supabase;
+
+  @override
+  Stream<List<TransactionModel>> watchUserTransactions(String userId) {
+    return _supabase
+        .from('transactions')
+        .stream(primaryKey: ['id'])
+        .or('sender_id.eq.$userId,recipient_id.eq.$userId')
+        .order('created_at', ascending: false)
+        .map((data) => data.map((json) => TransactionModel.fromJson(json)).toList());
+  }
+
+  @override
+  Future<TransactionModel> getTransactionById(String transactionId) async {
+    final response = await _supabase
+        .from('transactions')
+        .select()
+        .eq('id', transactionId)
+        .single();
+    return TransactionModel.fromJson(response);
+  }
+}
+```
+
+---
+
+## 6. UI Screens to Implement
+
+### 1. SplashScreen / Onboarding
+- Logo and app name
+- Auto-redirect to login or home based on auth state
+
+### 2. LoginScreen
+- Email and password fields with validation
+- "Sign In" button with loading state
+- Link to Register screen
+- "Forgot Password" option
+
+### 3. RegisterScreen
+- Full name, email, password, optional phone number
+- Form validation
+- "Sign Up" button with loading state
+- Link to Login screen
+
+### 4. HomeScreen (Dashboard)
+- Real-time balance display (updates via subscription)
+- Quick action buttons: Send, Deposit, Withdraw
+- Recent transactions list (last 5 items)
+- Pull-to-refresh functionality
+
+### 5. SendMoneyScreen
+- Recipient search/lookup (by email or phone)
+- Amount input with validation
+- Optional description field
+- Confirmation dialog before sending
+- Success/error feedback
+
+### 6. DepositScreen
+- Amount input with validation
+- Payment method selection (simulated)
+- Confirmation step
+- Success feedback with updated balance
+
+### 7. WithdrawScreen
+- Amount input with validation
+- Balance check (cannot exceed current balance)
+- Confirmation step
+- Success feedback with updated balance
+
+### 8. TransactionHistoryScreen
+- Full list of all transactions
+- Real-time updates (new transactions appear automatically)
+- Filter options (All, Sent, Received, Deposits, Withdrawals)
+- Tap to view transaction details
+
+### 9. TransactionDetailScreen
+- Transaction reference, amount, date, status
+- Sender/recipient information
+- Description if provided
+
+### 10. ProfileScreen
+- Display user information
+- Edit profile option
+- App settings
+- Logout button with confirmation
+
+---
+
+## 7. Key UI Components
+
+### Balance Card Widget
+
+```dart
+class BalanceCard extends StatelessWidget {
+  final WalletModel wallet;
+  final bool isLoading;
+
+  const BalanceCard({
+    super.key,
+    required this.wallet,
+    this.isLoading = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading) return const SkeletonBalanceCard();
+    
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Theme.of(context).primaryColor,
+            Theme.of(context).primaryColor.withOpacity(0.8),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        children: [
+          Text('Available Balance', style: TextStyle(color: Colors.white70)),
+          const SizedBox(height: 8),
+          Text(
+            NumberFormat.currency(symbol: '\$').format(wallet.balance),
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+### Transaction Tile Widget
+
+```dart
+class TransactionTile extends StatelessWidget {
+  final TransactionModel transaction;
+
+  const TransactionTile({super.key, required this.transaction});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: _getBackgroundColor(),
+        child: Icon(_getIcon(), color: Colors.white),
+      ),
+      title: Text(transaction.displayTitle),
+      subtitle: Text(DateFormat('MMM dd, yyyy • h:mm a').format(transaction.createdAt)),
+      trailing: Text(
+        '${transaction.isOutgoing ? '-' : '+'}${NumberFormat.currency(symbol: '\$').format(transaction.amount)}',
+        style: TextStyle(
+          color: transaction.isOutgoing ? Colors.red : Colors.green,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Color _getBackgroundColor() {
+    switch (transaction.type) {
+      case TransactionType.deposit:
+        return Colors.green;
+      case TransactionType.withdrawal:
+        return Colors.orange;
+      case TransactionType.transfer:
+        return transaction.senderId != null ? Colors.blue : Colors.purple;
+    }
+  }
+
+  IconData _getIcon() {
+    switch (transaction.type) {
+      case TransactionType.deposit:
+        return Icons.arrow_downward;
+      case TransactionType.withdrawal:
+        return Icons.arrow_upward;
+      case TransactionType.transfer:
+        return Icons.swap_horiz;
+    }
+  }
+}
+```
+
+---
+
+## 8. Riverpod Providers Setup
+
+### Auth Provider
+
+```dart
+final authRepositoryProvider = Provider<AuthRepository>((ref) {
+  return AuthRepositoryImpl(supabase: Supabase.instance.client);
+});
+
+final authStateProvider = StreamProvider<UserModel?>((ref) {
+  final repo = ref.watch(authRepositoryProvider);
+  return repo.authStateChanges;
+});
+
+final authControllerProvider = StateNotifierProvider<AuthController, AsyncValue<UserModel?>>((ref) {
+  final repo = ref.watch(authRepositoryProvider);
+  return AuthController(repo);
+});
+```
+
+### Wallet Provider
+
+```dart
+final walletRepositoryProvider = Provider<WalletRepository>((ref) {
+  return WalletRepositoryImpl(supabase: Supabase.instance.client);
+});
+
+final walletProvider = StreamProvider.family<WalletModel?, String>((ref, userId) {
+  final repo = ref.watch(walletRepositoryProvider);
+  return repo.watchUserWallet(userId);
+});
+
+final walletControllerProvider = StateNotifierProvider<WalletController, AsyncValue<void>>((ref) {
+  final repo = ref.watch(walletRepositoryProvider);
+  return WalletController(repo);
+});
+```
+
+### Transaction Provider
+
+```dart
+final transactionRepositoryProvider = Provider<TransactionRepository>((ref) {
+  return TransactionRepositoryImpl(supabase: Supabase.instance.client);
+});
+
+final transactionsProvider = StreamProvider.family<List<TransactionModel>, String>((ref, userId) {
+  final repo = ref.watch(transactionRepositoryProvider);
+  return repo.watchUserTransactions(userId);
+});
+```
+
+---
+
+## 9. Implementation Checklist
+
+### Phase 1: Project Setup
+- [ ] Initialize Flutter project with dependencies
+- [ ] Set up folder structure per documentation
+- [ ] Configure Supabase client initialization
+- [ ] Set up routing with GoRouter
+- [ ] Create app theme (light/dark mode)
+
+### Phase 2: Authentication
+- [ ] Implement AuthRepository
+- [ ] Create AuthProvider with Riverpod
+- [ ] Build LoginScreen UI
+- [ ] Build RegisterScreen UI
+- [ ] Implement session persistence
+- [ ] Add form validation
+
+### Phase 3: Wallet Dashboard
+- [ ] Create Wallet model
+- [ ] Implement WalletRepository
+- [ ] Set up real-time wallet balance stream
+- [ ] Build HomeScreen with BalanceCard
+- [ ] Add QuickActionsGrid widget
+- [ ] Implement pull-to-refresh
+
+### Phase 4: Transactions Display
+- [ ] Create Transaction model
+- [ ] Implement TransactionRepository
+- [ ] Set up real-time transaction stream
+- [ ] Build TransactionHistoryScreen
+- [ ] Build TransactionDetailScreen
+- [ ] Create TransactionTile widget
+- [ ] Add skeleton loading states
+
+### Phase 5: Money Movement
+- [ ] Build SendMoneyScreen
+- [ ] Implement recipient search functionality
+- [ ] Build DepositScreen
+- [ ] Build WithdrawScreen
+- [ ] Create AmountInputField widget
+- [ ] Add confirmation dialogs for all money operations
+- [ ] Implement success/error handling
+
+### Phase 6: Profile & Settings
+- [ ] Build ProfileScreen
+- [ ] Implement profile update functionality
+- [ ] Add settings options
+- [ ] Implement logout with confirmation
+
+### Phase 7: Polish
+- [ ] Add empty states for no transactions
+- [ ] Implement error handling with user-friendly messages
+- [ ] Add loading skeletons (shimmer)
+- [ ] Test all real-time subscriptions
+- [ ] Final UI/UX polish
+- [ ] Dark mode verification
+
+---
+
+## 10. Testing Credentials
+
+The following test users exist in the database:
+
+| Email | Password | User ID |
+|-------|----------|---------|
+| gifthlahla@omaribank.com | gift1234 | 861b1d3f-431b-485f-ae61-0ef79c133a81 |
+| test2@omaribank.com | Test123! | ca893807-a3c7-43af-a2b5-4bd204e9489a |
+
+Both users have wallets with initial balances. Use these for testing transfers.
+
+---
+
+## 11. Critical Implementation Notes
+
+### Security Requirements
+- **NEVER** update wallet balances directly from the client
+- **ALWAYS** use RPC functions (`transfer_money`, `process_deposit`, `process_withdrawal`) for all money operations
+- RLS policies ensure users can only access their own data
+
+### Real-Time Subscriptions
+- Wallet balance updates automatically when transfers occur
+- Transaction list updates in real-time as new transactions are created
+- Use `StreamBuilder` or Riverpod `StreamProvider` for subscription handling
+
+### Error Handling
+- Wrap all RPC calls in try-catch blocks
+- Display user-friendly error messages from database exceptions
+- Validate amounts before calling RPC functions
+
+### UI/UX Guidelines
+- Use consistent spacing (multiples of 8)
+- Card-based design with subtle shadows
+- Skeleton loaders for all async operations
+- Pull-to-refresh for manual data sync
+- Confirmation dialogs for destructive actions (logout, money transfers)
+
