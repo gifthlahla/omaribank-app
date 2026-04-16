@@ -12,12 +12,6 @@ A modern mobile banking application built with Flutter and Supabase. Omari Bank 
 - 🎨 **Modern UI** – Clean, card-based design with skeleton loaders and pull-to-refresh
 - 🌙 **Dark Mode Support** – Full light/dark theme compatibility
 
-## 📱 Screenshots
-
-| Home | Transactions | Send Money | Profile |
-|------|--------------|------------|---------|
-| ![Home](screenshots/home.png) | ![Transactions](screenshots/transactions.png) | ![Send](screenshots/send.png) | ![Profile](screenshots/profile.png) |
-
 ## 🛠️ Tech Stack
 
 | Category | Technology |
