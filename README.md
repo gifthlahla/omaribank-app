@@ -24,28 +24,6 @@ A modern mobile banking application built with Flutter and Supabase. Omari Bank 
 | **Database** | PostgreSQL (via Supabase) |
 | **Authentication** | Supabase Auth |
 
-## 📁 Project Structure
-lib/
-├── main.dart # App entry point
-├── app/
-│ ├── app.dart # MaterialApp configuration
-│ └── app_router.dart # GoRouter routes
-├── core/
-│ ├── constants/ # App constants, colors, strings
-│ ├── theme/ # Light/dark theme definitions
-│ ├── utils/ # Formatters, validators, extensions
-│ └── widgets/ # Reusable UI components
-├── features/
-│ ├── auth/ # Authentication feature
-│ │ ├── data/ # Repositories
-│ │ ├── domain/ # Models
-│ │ └── presentation/ # Screens, providers, widgets
-│ ├── wallet/ # Wallet/dashboard feature
-│ ├── transactions/ # Transactions feature
-│ └── profile/ # User profile feature
-└── shared/
-└── services/ # Shared services (e.g., Supabase client)
-
 ## 🚀 Getting Started
 
 ### Prerequisites
