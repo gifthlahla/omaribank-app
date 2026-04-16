@@ -2,10 +2,6 @@
 
 A modern mobile banking application built with Flutter and Supabase. Omari Bank provides a seamless digital wallet experience with real-time balance updates, peer-to-peer transfers, and comprehensive transaction history.
 
-<p align="center">
-  <img src="assets/images/logo.png" alt="Omari Bank Logo" width="150"/>
-</p>
-
 ## ✨ Features
 
 - 🔐 **Secure Authentication** – Email/password signup and login with Supabase Auth
